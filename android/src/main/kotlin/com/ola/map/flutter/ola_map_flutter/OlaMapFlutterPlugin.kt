@@ -37,7 +37,7 @@ class OlaMapFlutterPlugin : FlutterPlugin, MethodCallHandler {
   }
 
   override fun onMethodCall(call: MethodCall, result: Result) {
-    Log.d("Erro", call.method)
+    Log.d("OlaMapFlutter", call.method)
     when (call.method) {
       "getPlatformVersion" -> {
         result.success("Android ${android.os.Build.VERSION.RELEASE}")
@@ -58,6 +58,229 @@ class OlaMapViewFactory(private val messenger: BinaryMessenger) : PlatformViewFa
   }
 }
 
+/**
+ * POI Layer Manager
+ * Handles discovery, hiding, and management of POI layers with robust error handling
+ */
+class POILayerManager {
+
+  companion object {
+    private const val TAG = "POILayerManager"
+
+    // Comprehensive POI layer patterns based on MapLibre/Mapbox standards
+    private val POI_LAYER_PATTERNS = arrayOf(
+      "poi", "place", "label", "symbol",
+      "airport", "rail", "transit", "station",
+      "shop", "store", "restaurant", "cafe", "hotel",
+      "hospital", "bank", "school", "park",
+      "natural", "building", "landmark"
+    )
+  }
+
+  private var discoveredPOILayers = mutableListOf<String>()
+  private var isStyleLoaded = false
+
+  /**
+   * Discover all POI layers in the current style
+   * Best Practice: Always discover layers before manipulation
+   */
+  fun discoverPOILayers(style: Any): List<String> {
+    val poiLayers = mutableListOf<String>()
+
+    try {
+      val getLayersMethod = style.javaClass.getMethod("getLayers")
+      val layers = getLayersMethod.invoke(style) as? List<*>
+
+      if (layers.isNullOrEmpty()) {
+        Log.w(TAG, "No layers found in style")
+        return emptyList()
+      }
+
+      Log.d(TAG, "Discovering POI layers from ${layers.size} total layers...")
+
+      layers.forEach { layer ->
+        if (layer != null) {
+          try {
+            val getIdMethod = layer.javaClass.getMethod("getId")
+            val layerId = getIdMethod.invoke(layer) as? String
+
+            if (layerId != null) {
+              val isPOI = POI_LAYER_PATTERNS.any { pattern ->
+                layerId.contains(pattern, ignoreCase = true)
+              }
+
+              if (isPOI) {
+                poiLayers.add(layerId)
+                Log.d(TAG, "  ✓ Found POI layer: $layerId")
+              }
+            }
+          } catch (e: Exception) {
+            Log.w(TAG, "Error inspecting layer: ${e.message}")
+          }
+        }
+      }
+
+      discoveredPOILayers = poiLayers
+      isStyleLoaded = true
+
+      Log.d(TAG, "✓ Discovered ${poiLayers.size} POI layers")
+
+    } catch (e: Exception) {
+      Log.e(TAG, "Error discovering POI layers: ${e.message}", e)
+    }
+
+    return poiLayers
+  }
+
+  /**
+   * Hide POI layers using visibility property (reversible)
+   * Best Practice: Use visibility toggling for dynamic control
+   */
+  fun hidePOILayers(style: Any, layerIds: List<String>? = null): Int {
+    val layersToHide = layerIds ?: discoveredPOILayers
+    var hiddenCount = 0
+
+    if (layersToHide.isEmpty()) {
+      Log.w(TAG, "No POI layers to hide")
+      return 0
+    }
+
+    Log.d(TAG, "Hiding ${layersToHide.size} POI layers...")
+
+    layersToHide.forEach { layerId ->
+      try {
+        // Get the layer
+        val getLayerMethod = style.javaClass.getMethod("getLayer", String::class.java)
+        val layer = getLayerMethod.invoke(style, layerId)
+
+        if (layer != null) {
+          // Use MapLibre/Mapbox PropertyFactory to set visibility
+          try {
+            val propertyFactoryClass = Class.forName("com.mapbox.mapboxsdk.style.layers.PropertyFactory")
+            val propertyClass = Class.forName("com.mapbox.mapboxsdk.style.layers.Property")
+
+            val visibilityMethod = propertyFactoryClass.getMethod("visibility", String::class.java)
+            val noneField = propertyClass.getDeclaredField("NONE")
+            val noneValue = noneField.get(null) as String
+
+            val visibilityProperty = visibilityMethod.invoke(null, noneValue)
+
+            val setPropertiesMethod = layer.javaClass.getMethod(
+              "setProperties",
+              Class.forName("com.mapbox.mapboxsdk.style.layers.PropertyValue").arrayOfNulls<Class<*>>(0).javaClass
+            )
+            setPropertiesMethod.invoke(layer, arrayOf(visibilityProperty))
+
+            hiddenCount++
+            Log.d(TAG, "  ✓ Hidden: $layerId")
+
+          } catch (e: Exception) {
+            Log.w(TAG, "  ✗ Failed to hide $layerId: ${e.message}")
+          }
+        } else {
+          Log.w(TAG, "  ✗ Layer not found: $layerId")
+        }
+
+      } catch (e: Exception) {
+        Log.w(TAG, "  ✗ Error hiding layer $layerId: ${e.message}")
+      }
+    }
+
+    Log.d(TAG, "✓ Successfully hidden $hiddenCount/${layersToHide.size} POI layers")
+    return hiddenCount
+  }
+
+  /**
+   * Show POI layers by setting visibility to visible
+   * Best Practice: Reversible operation for dynamic control
+   */
+  fun showPOILayers(style: Any, layerIds: List<String>? = null): Int {
+    val layersToShow = layerIds ?: discoveredPOILayers
+    var shownCount = 0
+
+    Log.d(TAG, "Showing ${layersToShow.size} POI layers...")
+
+    layersToShow.forEach { layerId ->
+      try {
+        val getLayerMethod = style.javaClass.getMethod("getLayer", String::class.java)
+        val layer = getLayerMethod.invoke(style, layerId)
+
+        if (layer != null) {
+          try {
+            val propertyFactoryClass = Class.forName("com.mapbox.mapboxsdk.style.layers.PropertyFactory")
+            val propertyClass = Class.forName("com.mapbox.mapboxsdk.style.layers.Property")
+
+            val visibilityMethod = propertyFactoryClass.getMethod("visibility", String::class.java)
+            val visibleField = propertyClass.getDeclaredField("VISIBLE")
+            val visibleValue = visibleField.get(null) as String
+
+            val visibilityProperty = visibilityMethod.invoke(null, visibleValue)
+
+            val setPropertiesMethod = layer.javaClass.getMethod(
+              "setProperties",
+              Class.forName("com.mapbox.mapboxsdk.style.layers.PropertyValue").arrayOfNulls<Class<*>>(0).javaClass
+            )
+            setPropertiesMethod.invoke(layer, arrayOf(visibilityProperty))
+
+            shownCount++
+            Log.d(TAG, "  ✓ Shown: $layerId")
+
+          } catch (e: Exception) {
+            Log.w(TAG, "  ✗ Failed to show $layerId: ${e.message}")
+          }
+        }
+
+      } catch (e: Exception) {
+        Log.w(TAG, "  ✗ Error showing layer $layerId: ${e.message}")
+      }
+    }
+
+    Log.d(TAG, "✓ Successfully shown $shownCount/${layersToShow.size} POI layers")
+    return shownCount
+  }
+
+  /**
+   * Permanently remove POI layers
+   * Best Practice: Only use when layers won't need to be restored
+   */
+  fun removePOILayersPermanently(style: Any, layerIds: List<String>? = null): Int {
+    val layersToRemove = layerIds ?: discoveredPOILayers
+    var removedCount = 0
+
+    Log.d(TAG, "Permanently removing ${layersToRemove.size} POI layers...")
+
+    try {
+      val removeLayerMethod = style.javaClass.getMethod("removeLayer", String::class.java)
+
+      layersToRemove.forEach { layerId ->
+        try {
+          removeLayerMethod.invoke(style, layerId)
+          removedCount++
+          Log.d(TAG, "  ✓ Removed: $layerId")
+        } catch (e: Exception) {
+          Log.w(TAG, "  ✗ Failed to remove $layerId: ${e.message}")
+        }
+      }
+
+    } catch (e: Exception) {
+      Log.e(TAG, "Error removing layers: ${e.message}", e)
+    }
+
+    Log.d(TAG, "✓ Successfully removed $removedCount/${layersToRemove.size} POI layers")
+
+    // Clear discovered layers since they're now removed
+    if (removedCount > 0) {
+      discoveredPOILayers.clear()
+    }
+
+    return removedCount
+  }
+
+  fun getDiscoveredLayers(): List<String> = discoveredPOILayers.toList()
+
+  fun isStyleReady(): Boolean = isStyleLoaded
+}
+
 class OlaMapViewController(
   private val context: Context,
   messenger: BinaryMessenger,
@@ -68,21 +291,28 @@ class OlaMapViewController(
   private val mapView: OlaMapView = OlaMapView(context)
   private val methodChannel: MethodChannel = MethodChannel(messenger, "ola_map_flutter_$viewId")
   private var olaMap: OlaMap? = null
+  private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+  private val poiManager = POILayerManager()
+
+  private var showPOI: Boolean = true
+  private var styleLoadAttempts = 0
+  private val maxStyleLoadAttempts = 5
 
   init {
-    Log.d("OlaMapViewController", "OlaMapView initialized with viewId: $viewId")
+    Log.d("OlaMapViewController", "Initializing with viewId: $viewId")
 
     val apiKey = creationParams?.get("apiKey") as? String
-    val showPOI = creationParams?.get("showPOI") as? Boolean ?: true
+    showPOI = creationParams?.get("showPOI") as? Boolean ?: true
+
+    Log.d("OlaMapViewController", "Configuration - showPOI: $showPOI")
 
     if (apiKey.isNullOrEmpty()) {
       methodChannel.invokeMethod("onError", "API key is missing or invalid")
     } else {
-      initializeMap(apiKey, showPOI)
+      initializeMap(apiKey)
     }
 
     methodChannel.setMethodCallHandler { call, result ->
-      Log.d("Erro", call.method)
       when (call.method) {
         "getCurrentLocation" -> getCurrentLocation(result)
         "showCurrentLocation" -> showCurrentLocation(result)
@@ -93,25 +323,19 @@ class OlaMapViewController(
         "moveToCurrentLocation" -> moveToSpecifiedLocation(call, result)
         "addMarker" -> addMarker(call, result)
         "removeMarker" -> removeMarker(call, result)
+        "togglePOI" -> togglePOI(call, result)
+        "discoverPOILayers" -> discoverPOILayers(result)
         else -> {
-          Log.e("OlaMapViewController", "Unknown method called: ${call.method}")
+          Log.e("OlaMapViewController", "Unknown method: ${call.method}")
           result.notImplemented()
         }
       }
     }
   }
 
-  private fun initializeMap(apiKey: String, showPOI: Boolean) {
+  private fun initializeMap(apiKey: String) {
     try {
-      Log.d("OlaMapInit", "Initializing map - showPOI: $showPOI")
-
-      // NEW: Try to modify API key to include style parameter
-      val modifiedApiKey = if (!showPOI) {
-        Log.d("OlaMapInit", "Attempting to use custom style URL")
-        apiKey // We'll modify after map is ready
-      } else {
-        apiKey
-      }
+      Log.d("OlaMapInit", "Starting map initialization...")
 
       val mapControlSettings = MapControlSettings.Builder()
         .setRotateGesturesEnabled(true)
@@ -125,23 +349,11 @@ class OlaMapViewController(
       mapView.getMap(apiKey, object : OlaMapCallback {
         override fun onMapReady(map: OlaMap) {
           olaMap = map
-          Log.d("OlaMapInit", "✓ Map ready!")
+          Log.d("OlaMapInit", "✓ Map ready callback received")
 
+          // Best Practice: Wait for style to load before manipulating
           if (!showPOI) {
-            // Try to load custom style
-            tryLoadCustomStyle(map)
-
-            // Also try hiding layers
-            hideAllPOIs(map)
-
-            // Retry after delays
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-              hideAllPOIs(map)
-            }, 500)
-
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-              hideAllPOIs(map)
-            }, 1500)
+            scheduleStyleManipulation()
           }
 
           methodChannel.invokeMethod("onMapReady", null)
@@ -154,390 +366,175 @@ class OlaMapViewController(
       }, mapControlSettings)
 
     } catch (e: Exception) {
-      Log.e("OlaMapInit", "Exception: ${e.message}", e)
+      Log.e("OlaMapInit", "Exception during initialization: ${e.message}", e)
       methodChannel.invokeMethod("onError", e.message)
     }
   }
 
-  // NEW: Try to load a custom style without POIs
-  private fun tryLoadCustomStyle(map: OlaMap) {
-    try {
-      Log.d("OlaMapStyle", "Attempting to load custom style")
+  /**
+   * Best Practice: Schedule style manipulation with progressive delays
+   * Ensures style is fully loaded before manipulation
+   */
+  private fun scheduleStyleManipulation() {
+    val delays = arrayOf(0L, 300L, 800L, 1500L, 2500L)
 
-      // Try to find a setStyleUrl or similar method
-      val methods = map.javaClass.methods
-
-      for (method in methods) {
-        if (method.name.contains("style", ignoreCase = true) &&
-          method.parameterCount == 1 &&
-          method.parameterTypes[0] == String::class.java) {
-
-          Log.d("OlaMapStyle", "Found style method: ${method.name}")
-
-          try {
-            // Try Ola Maps style URL without POI
-            val customStyleUrl = "https://api.olamaps.io/tiles/vector/v1/styles/default-light-standard/style.json"
-            method.invoke(map, customStyleUrl)
-            Log.d("OlaMapStyle", "✓ Applied custom style URL")
-            return
-          } catch (e: Exception) {
-            Log.e("OlaMapStyle", "Failed to apply style: ${e.message}")
-          }
-        }
-      }
-
-      Log.w("OlaMapStyle", "No style method found")
-
-    } catch (e: Exception) {
-      Log.e("OlaMapStyle", "Error in tryLoadCustomStyle: ${e.message}")
+    delays.forEachIndexed { index, delay ->
+      handler.postDelayed({
+        styleLoadAttempts = index + 1
+        Log.d("OlaMapPOI", "--- Style manipulation attempt $styleLoadAttempts/$maxStyleLoadAttempts (${delay}ms) ---")
+        processStyleWithCallback()
+      }, delay)
     }
   }
 
-  private fun hideAllPOIs(map: OlaMap) {
+  /**
+   * Best Practice: Always use callback-based getStyle() to avoid null errors
+   */
+  private fun processStyleWithCallback() {
     try {
-      Log.d("OlaMapPOI", "========================================")
-      Log.d("OlaMapPOI", "Starting POI removal process")
-      Log.d("OlaMapPOI", "========================================")
+      val map = olaMap ?: return
 
-      // Get the MapboxMapImpl field we found in logs
+      // Access MapboxMapImpl
+      val mapField = map.javaClass.getDeclaredField("map")
+      mapField.isAccessible = true
+      val mapboxMapImpl = mapField.get(map) ?: return
+
+      // Create callback for getStyle
+      val listenerClass = Class.forName("com.ola.mapsdk.style.OlaMapStyle\$OnStyleLoadedListener")
+
+      val proxy = java.lang.reflect.Proxy.newProxyInstance(
+        listenerClass.classLoader,
+        arrayOf(listenerClass)
+      ) { _, method, args ->
+        if (method.name == "onStyleLoaded") {
+          val style = args?.get(0)
+          if (style != null) {
+            handleStyleLoaded(style)
+          } else {
+            Log.w("OlaMapPOI", "Style is null in callback")
+          }
+        }
+        null
+      }
+
+      // Call getStyle with callback
+      val getStyleMethod = mapboxMapImpl.javaClass.getMethod("getStyle", listenerClass)
+      getStyleMethod.invoke(mapboxMapImpl, proxy)
+
+    } catch (e: Exception) {
+      Log.e("OlaMapPOI", "Error in processStyleWithCallback: ${e.message}", e)
+    }
+  }
+
+  /**
+   * Handle style loaded - discover and hide POI layers
+   */
+  private fun handleStyleLoaded(style: Any) {
+    try {
+      Log.d("OlaMapPOI", "==========================================")
+      Log.d("OlaMapPOI", "Style loaded successfully")
+      Log.d("OlaMapPOI", "==========================================")
+
+      // Best Practice: First discover all POI layers
+      val poiLayers = poiManager.discoverPOILayers(style)
+
+      if (poiLayers.isEmpty()) {
+        Log.w("OlaMapPOI", "No POI layers discovered")
+        return
+      }
+
+      // Best Practice: Use visibility toggle (reversible)
+      val hiddenCount = poiManager.hidePOILayers(style)
+
+      Log.d("OlaMapPOI", "==========================================")
+      Log.d("OlaMapPOI", "✓✓✓ POI Management Complete")
+      Log.d("OlaMapPOI", "Discovered: ${poiLayers.size} layers")
+      Log.d("OlaMapPOI", "Hidden: $hiddenCount layers")
+      Log.d("OlaMapPOI", "==========================================")
+
+      // Notify Flutter
+      methodChannel.invokeMethod("onPOIHidden", mapOf(
+        "discovered" to poiLayers.size,
+        "hidden" to hiddenCount,
+        "layers" to poiLayers
+      ))
+
+    } catch (e: Exception) {
+      Log.e("OlaMapPOI", "Error handling style: ${e.message}", e)
+    }
+  }
+
+  /**
+   * Toggle POI visibility - demonstrating dynamic control
+   */
+  private fun togglePOI(call: MethodCall, result: Result) {
+    val show = call.argument<Boolean>("show") ?: true
+
+    try {
+      val map = olaMap
+      if (map == null) {
+        result.error("MAP_ERROR", "Map not initialized", null)
+        return
+      }
+
       val mapField = map.javaClass.getDeclaredField("map")
       mapField.isAccessible = true
       val mapboxMapImpl = mapField.get(map)
 
       if (mapboxMapImpl == null) {
-        Log.e("OlaMapPOI", "MapboxMapImpl is null")
+        result.error("MAP_ERROR", "MapboxMapImpl not found", null)
         return
       }
 
-      Log.d("OlaMapPOI", "✓ Got MapboxMapImpl: ${mapboxMapImpl.javaClass.name}")
+      val listenerClass = Class.forName("com.ola.mapsdk.style.OlaMapStyle\$OnStyleLoadedListener")
 
-      // Get the native Mapbox/MapLibre map
-      try {
-        val getNativeMapMethod = mapboxMapImpl.javaClass.getMethod("getNativeMap")
-        val nativeMap = getNativeMapMethod.invoke(mapboxMapImpl)
-
-        if (nativeMap != null) {
-          Log.d("OlaMapPOI", "✓ Got native map: ${nativeMap.javaClass.name}")
-
-          // Access the actual MapLibre/Mapbox map instance
-          val nativeMethods = nativeMap.javaClass.methods
-          Log.d("OlaMapPOI", "Native map methods: ${nativeMethods.map { it.name }.distinct().sorted().joinToString()}")
-
-          // Try to get style from native map
-          try {
-            val getStyleMethod = nativeMap.javaClass.getMethod("getStyle")
-            val style = getStyleMethod.invoke(nativeMap)
-
-            if (style != null) {
-              Log.d("OlaMapPOI", "✓ Got style from native map!")
-              removeAllPOILayers(style)
-            } else {
-              Log.w("OlaMapPOI", "Style is null, scheduling retry...")
-
-              // Style might not be loaded yet, retry after delay
-              android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                tryRemovePOIsFromNativeMap(nativeMap)
-              }, 1000)
-            }
-          } catch (e: Exception) {
-            Log.e("OlaMapPOI", "Error getting style: ${e.message}")
-          }
-        }
-      } catch (e: Exception) {
-        Log.e("OlaMapPOI", "Could not get native map: ${e.message}")
-      }
-
-      // Also try direct approach on MapboxMapImpl
-      try {
-        val mapViewField = mapboxMapImpl.javaClass.getDeclaredField("mapView")
-        mapViewField.isAccessible = true
-        val mapView = mapViewField.get(mapboxMapImpl)
-
-        if (mapView != null) {
-          Log.d("OlaMapPOI", "✓ Got MapView: ${mapView.javaClass.name}")
-          tryRemovePOIsFromMapView(mapView)
-        }
-      } catch (e: Exception) {
-        Log.e("OlaMapPOI", "Could not access MapView: ${e.message}")
-      }
-
-      Log.d("OlaMapPOI", "========================================")
-
-    } catch (e: Exception) {
-      Log.e("OlaMapPOI", "Error in hideAllPOIs: ${e.message}", e)
-    }
-  }
-
-  private fun tryRemovePOIsFromNativeMap(nativeMap: Any) {
-    try {
-      val getStyleMethod = nativeMap.javaClass.getMethod("getStyle")
-      val style = getStyleMethod.invoke(nativeMap)
-
-      if (style != null) {
-        Log.d("OlaMapPOI", "✓ Got style on retry!")
-        removeAllPOILayers(style)
-      } else {
-        Log.w("OlaMapPOI", "Style still null on retry")
-      }
-    } catch (e: Exception) {
-      Log.e("OlaMapPOI", "Retry failed: ${e.message}")
-    }
-  }
-
-  private fun tryRemovePOIsFromMapView(mapView: Any) {
-    try {
-      // MapLibre MapView should have getMapAsync or similar
-      val methods = mapView.javaClass.methods
-      Log.d("OlaMapPOI", "MapView methods: ${methods.map { it.name }.distinct().take(30).sorted().joinToString()}")
-
-      // Try to get the map from MapView
-      for (methodName in listOf("getMapAsync", "getMap", "getMapboxMap")) {
-        try {
-          val method = mapView.javaClass.getMethod(methodName)
-          Log.d("OlaMapPOI", "Found method: $methodName")
-          // This might need a callback, skip for now
-        } catch (e: Exception) {
-          // Method doesn't exist
-        }
-      }
-    } catch (e: Exception) {
-      Log.e("OlaMapPOI", "Error in tryRemovePOIsFromMapView: ${e.message}")
-    }
-  }
-
-  private fun removeAllPOILayers(style: Any) {
-    try {
-      Log.d("OlaMapPOI", "--- Removing POI layers from style ---")
-
-      // Get all layers
-      val getLayersMethod = style.javaClass.getMethod("getLayers")
-      val layers = getLayersMethod.invoke(style) as? List<*>
-
-      if (layers == null || layers.isEmpty()) {
-        Log.w("OlaMapPOI", "No layers found in style")
-        return
-      }
-
-      Log.d("OlaMapPOI", "✓ Found ${layers.size} total layers")
-
-      // Collect all layer IDs
-      val layerIdsToRemove = mutableListOf<String>()
-
-      for (layer in layers) {
-        if (layer != null) {
-          try {
-            val getIdMethod = layer.javaClass.getMethod("getId")
-            val layerId = getIdMethod.invoke(layer) as? String
-
-            if (layerId != null) {
-              // Check if this is a POI/place/label layer
-              val isPOI = layerId.contains("poi", ignoreCase = true) ||
-                      layerId.contains("place", ignoreCase = true) ||
-                      layerId.contains("label", ignoreCase = true) ||
-                      layerId.contains("symbol", ignoreCase = true)
-
-              Log.d("OlaMapPOI", "Layer: $layerId ${if (isPOI) "→ WILL REMOVE" else ""}")
-
-              if (isPOI) {
-                layerIdsToRemove.add(layerId)
-              }
-            }
-          } catch (e: Exception) {
-            Log.e("OlaMapPOI", "Error processing layer: ${e.message}")
-          }
-        }
-      }
-
-      // Now remove the POI layers
-      var removedCount = 0
-      for (layerId in layerIdsToRemove) {
-        try {
-          val removeLayerMethod = style.javaClass.getMethod("removeLayer", String::class.java)
-          removeLayerMethod.invoke(style, layerId)
-          Log.d("OlaMapPOI", "✓ REMOVED: $layerId")
-          removedCount++
-        } catch (e: Exception) {
-          Log.e("OlaMapPOI", "✗ Failed to remove $layerId: ${e.message}")
-
-          // Try alternative: hide with visibility
-          try {
-            val getLayerMethod = style.javaClass.getMethod("getLayer", String::class.java)
-            val layer = getLayerMethod.invoke(style, layerId)
-
-            if (layer != null) {
-              // Try to set visibility to NONE
-              try {
-                // This is MapLibre/Mapbox style
-                val propertyValueClass = Class.forName("com.mapbox.mapboxsdk.style.layers.PropertyValue")
-                val propertyFactoryClass = Class.forName("com.mapbox.mapboxsdk.style.layers.PropertyFactory")
-                val visibilityMethod = propertyFactoryClass.getMethod("visibility", String::class.java)
-                val visibilityValue = visibilityMethod.invoke(null, "none")
-
-                val setPropertiesMethod = layer.javaClass.getMethod("setProperties", propertyValueClass)
-                setPropertiesMethod.invoke(layer, visibilityValue)
-
-                Log.d("OlaMapPOI", "✓ HIDDEN: $layerId (via visibility)")
-                removedCount++
-              } catch (e2: Exception) {
-                Log.e("OlaMapPOI", "Could not set visibility: ${e2.message}")
-              }
-            }
-          } catch (e2: Exception) {
-            Log.e("OlaMapPOI", "Could not hide layer: ${e2.message}")
-          }
-        }
-      }
-
-      Log.d("OlaMapPOI", "========================================")
-      Log.d("OlaMapPOI", "✓✓✓ Successfully processed $removedCount/${layerIdsToRemove.size} POI layers")
-      Log.d("OlaMapPOI", "========================================")
-
-    } catch (e: Exception) {
-      Log.e("OlaMapPOI", "Error in removeAllPOILayers: ${e.message}", e)
-    }
-  }
-
-  private fun tryHidePOIsFromMapObject(mapObject: Any, fieldName: String): Boolean {
-    try {
-      Log.d("OlaMapPOI", "--- Analyzing $fieldName ---")
-
-      // Log all methods
-      val methods = mapObject.javaClass.methods
-      val methodNames = methods.map { it.name }.distinct().sorted()
-      Log.d("OlaMapPOI", "Available methods (${methodNames.size}): ${methodNames.take(20).joinToString()}")
-
-      // Try to get style
-      var style: Any? = null
-
-      for (methodName in listOf("getStyle", "style", "getMapStyle")) {
-        try {
-          val method = mapObject.javaClass.getMethod(methodName)
-          style = method.invoke(mapObject)
+      val proxy = java.lang.reflect.Proxy.newProxyInstance(
+        listenerClass.classLoader,
+        arrayOf(listenerClass)
+      ) { _, method, args ->
+        if (method.name == "onStyleLoaded") {
+          val style = args?.get(0)
           if (style != null) {
-            Log.d("OlaMapPOI", "✓ Got style using $methodName")
-            break
-          }
-        } catch (e: Exception) {
-          // Method doesn't exist, try next
-        }
-      }
-
-      if (style == null) {
-        Log.w("OlaMapPOI", "✗ Could not get style from $fieldName")
-        return false
-      }
-
-      Log.d("OlaMapPOI", "✓ Style object: ${style.javaClass.name}")
-
-      // Get all layers
-      var layers: List<*>? = null
-      try {
-        val getLayersMethod = style.javaClass.getMethod("getLayers")
-        layers = getLayersMethod.invoke(style) as? List<*>
-        Log.d("OlaMapPOI", "✓ Found ${layers?.size ?: 0} layers")
-      } catch (e: Exception) {
-        Log.e("OlaMapPOI", "✗ Could not get layers: ${e.message}")
-        return false
-      }
-
-      if (layers.isNullOrEmpty()) {
-        Log.w("OlaMapPOI", "✗ No layers found")
-        return false
-      }
-
-      // List all layer IDs
-      val layerIds = mutableListOf<String>()
-      layers.forEach { layer ->
-        if (layer != null) {
-          try {
-            val getIdMethod = layer.javaClass.getMethod("getId")
-            val layerId = getIdMethod.invoke(layer) as? String
-            if (layerId != null) {
-              layerIds.add(layerId)
+            val count = if (show) {
+              poiManager.showPOILayers(style)
+            } else {
+              poiManager.hidePOILayers(style)
             }
-          } catch (e: Exception) {
-            // Skip
+
+            result.success(mapOf(
+              "action" to if (show) "shown" else "hidden",
+              "count" to count
+            ))
           }
         }
+        null
       }
 
-      Log.d("OlaMapPOI", "Layer IDs: ${layerIds.joinToString()}")
-
-      // Hide POI-related layers
-      val poiPatterns = listOf(
-        "poi", "place", "label", "marker", "symbol",
-        "shop", "store", "restaurant", "cafe", "hotel",
-        "hospital", "bank", "school", "park"
-      )
-
-      var hiddenCount = 0
-
-      for (layerId in layerIds) {
-        val shouldHide = poiPatterns.any { pattern ->
-          layerId.contains(pattern, ignoreCase = true)
-        }
-
-        if (shouldHide) {
-          Log.d("OlaMapPOI", "Attempting to hide: $layerId")
-
-          // Try method 1: Remove layer
-          var hidden = false
-          try {
-            val removeLayerMethod = style.javaClass.getMethod("removeLayer", String::class.java)
-            removeLayerMethod.invoke(style, layerId)
-            Log.d("OlaMapPOI", "  ✓ Removed layer: $layerId")
-            hiddenCount++
-            hidden = true
-          } catch (e: Exception) {
-            Log.d("OlaMapPOI", "  ✗ Could not remove: ${e.message}")
-          }
-
-          // Try method 2: Set visibility to none
-          if (!hidden) {
-            try {
-              val getLayerMethod = style.javaClass.getMethod("getLayer", String::class.java)
-              val layer = getLayerMethod.invoke(style, layerId)
-
-              if (layer != null) {
-                try {
-                  val setVisibilityMethod = layer.javaClass.getMethod("setProperties", Any::class.java)
-                  // This might not work, but let's try
-                  Log.d("OlaMapPOI", "  ~ Trying setProperties on layer")
-                } catch (e: Exception) {
-                  // Try setting visibility property
-                  try {
-                    // MapLibre style approach
-                    val valueClass = Class.forName("com.mapbox.mapboxsdk.style.layers.PropertyValue")
-                    val visibilityClass = Class.forName("com.mapbox.mapboxsdk.style.layers.PropertyFactory")
-                    val visibilityMethod = visibilityClass.getMethod("visibility", String::class.java)
-                    val visibilityValue = visibilityMethod.invoke(null, "none")
-
-                    val setPropertiesMethod = layer.javaClass.getMethod("setProperties", valueClass)
-                    setPropertiesMethod.invoke(layer, visibilityValue)
-
-                    Log.d("OlaMapPOI", "  ✓ Hidden via visibility: $layerId")
-                    hiddenCount++
-                  } catch (e2: Exception) {
-                    Log.d("OlaMapPOI", "  ✗ Could not set visibility: ${e2.message}")
-                  }
-                }
-              }
-            } catch (e: Exception) {
-              Log.d("OlaMapPOI", "  ✗ Could not get layer: ${e.message}")
-            }
-          }
-        }
-      }
-
-      Log.d("OlaMapPOI", "✓ Hidden $hiddenCount POI layers")
-      return hiddenCount > 0
+      val getStyleMethod = mapboxMapImpl.javaClass.getMethod("getStyle", listenerClass)
+      getStyleMethod.invoke(mapboxMapImpl, proxy)
 
     } catch (e: Exception) {
-      Log.e("OlaMapPOI", "Error in tryHidePOIsFromMapObject: ${e.message}", e)
-      return false
+      Log.e("OlaMapPOI", "Error toggling POI: ${e.message}", e)
+      result.error("TOGGLE_ERROR", e.message, null)
     }
   }
 
+  /**
+   * Discover POI layers - useful for debugging
+   */
+  private fun discoverPOILayers(result: Result) {
+    try {
+      val layers = poiManager.getDiscoveredLayers()
+      result.success(mapOf(
+        "layers" to layers,
+        "count" to layers.size
+      ))
+    } catch (e: Exception) {
+      result.error("DISCOVER_ERROR", e.message, null)
+    }
+  }
+
+  // Existing methods remain unchanged
   private fun getCurrentLocation(result: MethodChannel.Result) {
     olaMap?.showCurrentLocation()
     val activityContext = context as? Activity
@@ -583,11 +580,12 @@ class OlaMapViewController(
       val currentZoomLevel = currentCameraPosition.zoomLevel
       if (targetLocation != null) {
         olaMap?.zoomToLocation(targetLocation, currentZoomLevel + 1.0)
+        result.success(null)
       } else {
-        result.error("LOCATION_ERROR", "Failed to get target location or zoom level", null)
+        result.error("ZOOM_ERROR", "Failed to get target location", null)
       }
     } else {
-      result.error("LOCATION_ERROR", "Failed to get current camera position", null)
+      result.error("ZOOM_ERROR", "Failed to get camera position", null)
     }
   }
 
@@ -600,10 +598,10 @@ class OlaMapViewController(
         olaMap?.zoomToLocation(targetLocation, value)
         result.success(null)
       } else {
-        result.error("LOCATION_ERROR", "Failed to get target location or zoom level", null)
+        result.error("ZOOM_ERROR", "Invalid parameters", null)
       }
     } else {
-      result.error("LOCATION_ERROR", "Failed to get current camera position", null)
+      result.error("ZOOM_ERROR", "Failed to get camera position", null)
     }
   }
 
@@ -614,11 +612,12 @@ class OlaMapViewController(
       val currentZoomLevel = currentCameraPosition.zoomLevel
       if (targetLocation != null) {
         olaMap?.zoomToLocation(targetLocation, currentZoomLevel - 1.0)
+        result.success(null)
       } else {
-        result.error("LOCATION_ERROR", "Failed to get target location or zoom level", null)
+        result.error("ZOOM_ERROR", "Failed to get target location", null)
       }
     } else {
-      result.error("LOCATION_ERROR", "Failed to get current camera position", null)
+      result.error("ZOOM_ERROR", "Failed to get camera position", null)
     }
   }
 
@@ -630,7 +629,7 @@ class OlaMapViewController(
       olaMap?.moveCameraToLatLong(location, 15.0)
       result.success(null)
     } else {
-      result.error("LOCATION_ERROR", "Latitude or Longitude is missing or invalid", null)
+      result.error("LOCATION_ERROR", "Latitude or Longitude missing", null)
     }
   }
 
@@ -654,7 +653,7 @@ class OlaMapViewController(
       olaMap?.addMarker(markerOptionsBuilder.build())
       result.success(null)
     } else {
-      result.error("INVALID_ARGUMENTS", "Marker ID, latitude, longitude, or imageBytes missing", null)
+      result.error("INVALID_ARGUMENTS", "Marker parameters missing", null)
     }
   }
 
@@ -664,6 +663,7 @@ class OlaMapViewController(
       .setMarkerId(markerId ?: "").build()
     val marker1 = olaMap?.addMarker(markerOptionsBuilder)
     marker1?.removeMarker()
+    result.success(null)
   }
 
   override fun getView(): View? {
@@ -671,6 +671,7 @@ class OlaMapViewController(
   }
 
   override fun dispose() {
-    Log.d("OlaMapViewController", "Disposing OlaMapView")
+    handler.removeCallbacksAndMessages(null)
+    Log.d("OlaMapViewController", "Disposed")
   }
 }
