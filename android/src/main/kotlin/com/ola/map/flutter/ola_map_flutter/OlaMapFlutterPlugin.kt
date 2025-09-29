@@ -76,17 +76,53 @@ class OlaMapViewController(
     Log.d("OlaMapViewController", "OlaMapView initialized with viewId: $viewId")
 
     val apiKey = creationParams?.get("apiKey") as? String
-    val showPOI = creationParams?.get("showPOI") as? Boolean ?: false  // ADD THIS
+    val showPOI = creationParams?.get("showPOI") as? Boolean ?: false  // NEW: Get POI preference
 
     if (apiKey.isNullOrEmpty()) {
       methodChannel.invokeMethod("onError", "API key is missing or invalid")
     } else {
-      initializeMap(apiKey, showPOI)  // MODIFY THIS
+      initializeMap(apiKey, showPOI)  // MODIFIED: Pass showPOI parameter
     }
-    // ... rest of your code
+
+    methodChannel.setMethodCallHandler { call, result ->
+      Log.d("Erro", call.method)
+      when (call.method) {
+        "getCurrentLocation" -> {
+          getCurrentLocation(result)
+        }
+        "showCurrentLocation" -> {
+          showCurrentLocation(result)
+        }
+        "hideCurrentLocation" -> {
+          hideCurrentLocation(result)
+        }
+        "zoomIn" -> {
+          zoomIn(result)
+        }
+        "zoomOut" -> {
+          zoomOut(result)
+        }
+        "zoomTo" -> {
+          zoom(call,result)
+        }
+        "moveToCurrentLocation" -> {
+          moveToSpecifiedLocation(call,result)
+        }
+        "addMarker" -> {
+          addMarker(call,result)
+        }
+        "removeMarker" -> {
+          removeMarker(call, result)
+        }
+        else -> {
+          Log.e("OlaMapViewController", "Unknown method called: ${call.method}")
+          result.notImplemented()
+        }
+      }
+    }
   }
 
-  private fun initializeMap(apiKey: String, showPOI: Boolean) {  // ADD showPOI parameter
+  private fun initializeMap(apiKey: String, showPOI: Boolean = true) {  // MODIFIED: Added showPOI parameter
     try {
       Log.d("OlaMapViewController", "API Key is valid, initializing map...")
       val mapControlSettings = MapControlSettings.Builder()
@@ -102,7 +138,7 @@ class OlaMapViewController(
         override fun onMapReady(map: OlaMap) {
           olaMap = map
 
-          // ADD THIS BLOCK TO HIDE POIs
+          // NEW: Hide POIs if requested
           if (!showPOI) {
             try {
               hideMapPOIs(map)
@@ -125,62 +161,247 @@ class OlaMapViewController(
     } catch (e: Exception) {
       Log.e("OlaMapViewController", "Exception during map initialization: ${e.message}", e)
       methodChannel.invokeMethod("onError", e.message)
+    } finally {
+      Log.d("OlaMapViewController", "Finally block executed after map initialization")
     }
   }
 
-  // ADD THIS NEW FUNCTION
+  // NEW: Function to hide POI markers
   private fun hideMapPOIs(map: OlaMap) {
     try {
-      // Method 1: Try using style if available
-      val styleJson = """
-        {
-          "version": 8,
-          "layers": [
-            {
-              "id": "poi",
-              "type": "symbol",
-              "source-layer": "poi",
-              "layout": {
-                "visibility": "none"
+      // Since Ola Maps is built on MapLibre, try to access the underlying map
+      // and hide POI layers
+
+      // First, let's try to inspect what's available
+      Log.d("OlaMapFlutterPlugin", "Attempting to hide POIs...")
+      Log.d("OlaMapFlutterPlugin", "OlaMap methods: ${map.javaClass.methods.joinToString { it.name }}")
+
+      // Try Method 1: Direct style modification if available
+      try {
+        val setStyleMethod = map.javaClass.getMethod("setStyle", String::class.java)
+        val styleJson = """
+          {
+            "version": 8,
+            "layers": [
+              {
+                "id": "poi",
+                "type": "symbol",
+                "source-layer": "poi",
+                "layout": {
+                  "visibility": "none"
+                }
+              }
+            ]
+          }
+        """.trimIndent()
+        setStyleMethod.invoke(map, styleJson)
+        Log.d("OlaMapFlutterPlugin", "POIs hidden using setStyle method")
+        return
+      } catch (e: NoSuchMethodException) {
+        Log.d("OlaMapFlutterPlugin", "setStyle method not found, trying alternative")
+      }
+
+      // Try Method 2: Access underlying MapLibre instance
+      try {
+        // Try to access mapLibreMap field
+        val fields = map.javaClass.declaredFields
+        Log.d("OlaMapFlutterPlugin", "Available fields: ${fields.joinToString { it.name }}")
+
+        for (field in fields) {
+          field.isAccessible = true
+          val fieldValue = field.get(map)
+          if (fieldValue != null) {
+            val fieldClassName = fieldValue.javaClass.name
+            if (fieldClassName.contains("maplibre", ignoreCase = true) ||
+              fieldClassName.contains("mapbox", ignoreCase = true)) {
+              Log.d("OlaMapFlutterPlugin", "Found map field: ${field.name} of type $fieldClassName")
+
+              // Try to get style and modify it
+              try {
+                val getStyleMethod = fieldValue.javaClass.getMethod("getStyle")
+                val style = getStyleMethod.invoke(fieldValue)
+
+                if (style != null) {
+                  // Try to hide POI layer
+                  val layerIds = listOf("poi", "poi-label", "poi_label", "place-label", "place_label")
+                  for (layerId in layerIds) {
+                    try {
+                      val setLayerPropertyMethod = style.javaClass.getMethod(
+                        "setLayerProperty",
+                        String::class.java,
+                        String::class.java,
+                        Any::class.java
+                      )
+                      setLayerPropertyMethod.invoke(style, layerId, "visibility", "none")
+                      Log.d("OlaMapFlutterPlugin", "Hidden layer: $layerId")
+                    } catch (e: Exception) {
+                      // Layer might not exist, that's okay
+                      Log.d("OlaMapFlutterPlugin", "Layer $layerId not found or couldn't be hidden")
+                    }
+                  }
+                }
+              } catch (e: Exception) {
+                Log.e("OlaMapFlutterPlugin", "Could not modify style: ${e.message}")
               }
             }
-          ]
+          }
         }
-      """.trimIndent()
-
-      // Check if OlaMap has a setStyle method
-      val setStyleMethod = map.javaClass.getMethod("setStyle", String::class.java)
-      setStyleMethod.invoke(map, styleJson)
-
-    } catch (e: NoSuchMethodException) {
-      Log.w("OlaMapFlutterPlugin", "setStyle method not available, trying alternative approach")
-
-      // Method 2: Try to get the underlying MapView and apply style
-      try {
-        // Since Ola Maps uses MapLibre under the hood, try to access it
-        val mapLibreField = map.javaClass.getDeclaredField("mapLibreMap")
-        mapLibreField.isAccessible = true
-        val mapLibreMap = mapLibreField.get(map)
-
-        if (mapLibreMap != null) {
-          val setStyleMethod = mapLibreMap.javaClass.getMethod("setStyle", String::class.java)
-          setStyleMethod.invoke(mapLibreMap, createStyleWithoutPOI())
-        }
-      } catch (e2: Exception) {
-        Log.e("OlaMapFlutterPlugin", "Alternative approach failed: ${e2.message}")
+      } catch (e: Exception) {
+        Log.e("OlaMapFlutterPlugin", "Could not access underlying map: ${e.message}")
       }
+
     } catch (e: Exception) {
-      Log.e("OlaMapFlutterPlugin", "Error hiding POIs: ${e.message}")
+      Log.e("OlaMapFlutterPlugin", "Error in hideMapPOIs: ${e.message}", e)
     }
   }
 
-  // ADD THIS HELPER FUNCTION
-  private fun createStyleWithoutPOI(): String {
-    // Use Ola Maps default style URL but with POI layer hidden
-    return """
-      https://api.olamaps.io/tiles/vector/v1/styles/default-light-standard/style.json?poi=false
-    """.trimIndent()
+  // All your existing methods remain the same...
+
+  private fun getCurrentLocation(result: MethodChannel.Result) {
+    olaMap?.showCurrentLocation()
+    val activityContext = context as? Activity
+    activityContext?.runOnUiThread {
+      if (olaMap == null) {
+        result.error("LOCATION_ERROR", "OlaMap instance is not initialized", null)
+        return@runOnUiThread
+      }
+
+      val currentLocation: OlaLatLng? = olaMap?.getCurrentLocation()
+      if (currentLocation != null) {
+        Log.d("OlaMapViewController", "Current location: $currentLocation")
+        val locationMap = mapOf(
+          "latitude" to currentLocation.latitude,
+          "longitude" to currentLocation.longitude
+        )
+        result.success(locationMap)
+      } else {
+        result.error("LOCATION_ERROR", "Current location is not available", null)
+      }
+    }
   }
 
-  // ... rest of your existing code remains the same
+  private fun showCurrentLocation(result: MethodChannel.Result) {
+    olaMap?.showCurrentLocation()
+    result.success("Current location shown")
+  }
+
+  private fun hideCurrentLocation(result: MethodChannel.Result) {
+    val activityContext = context as? Activity
+    activityContext?.runOnUiThread {
+      if (olaMap == null) {
+        result.error("LOCATION_ERROR", "OlaMap instance is not initialized", null)
+        return@runOnUiThread
+      }
+      olaMap?.hideCurrentLocation()
+      result.success("Current location hidden")
+    }
+  }
+
+  private fun zoomIn(result: Result) {
+    val currentCameraPosition = olaMap?.getCurrentOlaCameraPosition()
+    if (currentCameraPosition != null) {
+      val targetLocation = currentCameraPosition.target
+      val currentZoomLevel = currentCameraPosition.zoomLevel
+      if (targetLocation != null) {
+        olaMap?.zoomToLocation(targetLocation, currentZoomLevel + 1.0)
+      } else {
+        result.error("LOCATION_ERROR", "Failed to get target location or zoom level", null)
+      }
+    } else {
+      result.error("LOCATION_ERROR", "Failed to get current camera position", null)
+    }
+  }
+
+  private fun zoom(call: MethodCall, result: Result) {
+    val value = call.argument<Double>("value")
+    val currentCameraPosition = olaMap?.getCurrentOlaCameraPosition()
+    if (currentCameraPosition != null) {
+      val targetLocation = currentCameraPosition.target
+      val currentZoomLevel = currentCameraPosition.zoomLevel
+      if (targetLocation != null && value != null) {
+        olaMap?.zoomToLocation(targetLocation, value)
+        result.success(null)
+      } else {
+        result.error("LOCATION_ERROR", "Failed to get target location or zoom level", null)
+      }
+    } else {
+      result.error("LOCATION_ERROR", "Failed to get current camera position", null)
+    }
+  }
+
+  private fun zoomOut(result: Result) {
+    val currentCameraPosition = olaMap?.getCurrentOlaCameraPosition()
+    if (currentCameraPosition != null) {
+      val targetLocation = currentCameraPosition.target
+      val currentZoomLevel = currentCameraPosition.zoomLevel
+      if (targetLocation != null) {
+        olaMap?.zoomToLocation(targetLocation, currentZoomLevel - 1.0)
+      } else {
+        result.error("LOCATION_ERROR", "Failed to get target location or zoom level", null)
+      }
+    } else {
+      result.error("LOCATION_ERROR", "Failed to get current camera position", null)
+    }
+  }
+
+  private fun moveToSpecifiedLocation(call: MethodCall, result: Result) {
+    val latitude = call.argument<Double>("latitude")
+    val longitude = call.argument<Double>("longitude")
+    olaMap?.getCurrentLocation()
+    if (latitude != null && longitude != null) {
+      val location = OlaLatLng(latitude, longitude)
+      val zoomLevel = 15.0
+      olaMap?.moveCameraToLatLong(location, zoomLevel)
+      result.success(null)
+    } else {
+      result.error("LOCATION_ERROR", "Latitude or Longitude is missing or invalid", null)
+    }
+  }
+
+  private fun addMarker(call: MethodCall, result: Result) {
+    val markerId = call.argument<String>("markerId")
+    val latitude = call.argument<Double>("latitude")
+    val longitude = call.argument<Double>("longitude")
+    val imageBytes = call.argument<ByteArray>("imageBytes")
+    val setIsIconClickable = call.argument<Boolean>("setIsIconClickable")
+    val setIsAnimationEnable = call.argument<Boolean>("setIsAnimationEnable")
+    val setIsInfoWindowDismissOnClick = call.argument<Boolean>("setIsInfoWindowDismissOnClick")
+
+    if (markerId != null && latitude != null && longitude != null && imageBytes != null) {
+      val markerOptionsBuilder = OlaMarkerOptions.Builder()
+        .setMarkerId(markerId)
+        .setPosition(OlaLatLng(latitude, longitude))
+        .setIsIconClickable(true)
+        .setIconRotation(0f)
+        .setIsAnimationEnable(true)
+        .setIsInfoWindowDismissOnClick(true)
+
+      val bitmap = BitmapFactory.decodeStream(ByteArrayInputStream(imageBytes))
+      markerOptionsBuilder.setIconBitmap(bitmap)
+
+      olaMap?.addMarker(markerOptionsBuilder.build())
+      result.success(null)
+    } else {
+      result.error("INVALID_ARGUMENTS", "Marker ID, latitude, longitude, or imageBytes missing", null)
+    }
+  }
+
+  private fun removeMarker(call: MethodCall, result: Result) {
+    val markerId = call.argument<String>("markerId")
+    val markerOptionsBuilder = OlaMarkerOptions.Builder()
+      .setMarkerId(markerId ?: "").build()
+    val marker1 = olaMap?.addMarker(markerOptionsBuilder)
+    marker1?.removeMarker()
+  }
+
+  // FIXED: Changed return type from View to View?
+  override fun getView(): View? {
+    Log.d("OlaMapViewController", "Returning mapView")
+    return mapView
+  }
+
+  override fun dispose() {
+    Log.d("OlaMapViewController", "Disposing OlaMapView")
+    // Cleanup resources if necessary
+  }
 }
