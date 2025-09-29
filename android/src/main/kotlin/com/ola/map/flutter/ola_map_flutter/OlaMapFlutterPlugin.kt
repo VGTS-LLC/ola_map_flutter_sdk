@@ -165,10 +165,11 @@ class POILayerManager {
 
             val visibilityProperty = visibilityMethod.invoke(null, noneValue)
 
-            val setPropertiesMethod = layer.javaClass.getMethod(
-              "setProperties",
-              Class.forName("com.mapbox.mapboxsdk.style.layers.PropertyValue").arrayOfNulls<Class<*>>(0).javaClass
-            )
+            // Fixed: Get PropertyValue array class correctly
+            val propertyValueClass = Class.forName("com.mapbox.mapboxsdk.style.layers.PropertyValue")
+            val propertyValueArrayClass = java.lang.reflect.Array.newInstance(propertyValueClass, 0).javaClass
+
+            val setPropertiesMethod = layer.javaClass.getMethod("setProperties", propertyValueArrayClass)
             setPropertiesMethod.invoke(layer, arrayOf(visibilityProperty))
 
             hiddenCount++
@@ -216,10 +217,11 @@ class POILayerManager {
 
             val visibilityProperty = visibilityMethod.invoke(null, visibleValue)
 
-            val setPropertiesMethod = layer.javaClass.getMethod(
-              "setProperties",
-              Class.forName("com.mapbox.mapboxsdk.style.layers.PropertyValue").arrayOfNulls<Class<*>>(0).javaClass
-            )
+            // Fixed: Get PropertyValue array class correctly
+            val propertyValueClass = Class.forName("com.mapbox.mapboxsdk.style.layers.PropertyValue")
+            val propertyValueArrayClass = java.lang.reflect.Array.newInstance(propertyValueClass, 0).javaClass
+
+            val setPropertiesMethod = layer.javaClass.getMethod("setProperties", propertyValueArrayClass)
             setPropertiesMethod.invoke(layer, arrayOf(visibilityProperty))
 
             shownCount++
