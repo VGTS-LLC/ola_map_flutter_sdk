@@ -26,6 +26,8 @@ class _HomePageState extends State<HomePage> {
             showCurrentLocation: true,
             showZoomControls: true,
             showMyLocationButton: true,
+            showCompass: true,  // Custom compass in bottom-left
+            showPOI: false,     // Disable default POI markers
             apiKey: "******************************",
             onPlatformViewCreated: (OlaMapController controller) {
               _controller.complete(controller);

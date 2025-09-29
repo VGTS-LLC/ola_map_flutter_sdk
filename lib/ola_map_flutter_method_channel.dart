@@ -153,6 +153,15 @@ class MethodChannelOlaMapFlutter extends OlaMapFlutterPlatform {
   }
 
   @override
+  Future<void> resetRotation() async {
+    try {
+      await methodChannel.invokeMethod('resetRotation');
+    } on PlatformException catch (e) {
+      throw Exception("Failed to reset rotation: '${e.message}'.");
+    }
+  }
+
+  @override
   void setChannelName(MethodChannel channel) {
     methodChannel = channel;
   }

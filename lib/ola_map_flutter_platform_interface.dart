@@ -92,6 +92,10 @@ abstract class OlaMapFlutterPlatform extends PlatformInterface {
     throw UnimplementedError('removeCustomMarker() has not been implemented.');
   }
 
+  Future<void> resetRotation() {
+    throw UnimplementedError('resetRotation() has not been implemented.');
+  }
+
   Future<void> handleMethod(MethodCall call) {
     throw UnimplementedError('handleMethod() has not been implemented.');
   }

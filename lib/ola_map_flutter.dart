@@ -74,4 +74,8 @@ class OlaMapController {
       markerId: markerId,
     );
   }
+
+  Future<void> resetRotation() {
+    return OlaMapFlutterPlatform.instance.resetRotation();
+  }
 }
