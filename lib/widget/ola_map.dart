@@ -45,7 +45,7 @@ class _OlaMapState extends State<OlaMap> {
       children: [
         AndroidView(
           viewType: 'OlaMapView',
-          creationParams: {'apiKey': widget.apiKey},
+          creationParams: {'apiKey': widget.apiKey,'showPOI': false},
           creationParamsCodec: const StandardMessageCodec(),
           onPlatformViewCreated: (int id) {
             final OlaMapController controller = OlaMapController(id);
