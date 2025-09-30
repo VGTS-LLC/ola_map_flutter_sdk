@@ -61,6 +61,10 @@ class OlaMapController {
     return OlaMapFlutterPlatform.instance.moveToCurrentLocation();
   }
 
+  Future<void> moveCameraToLocation({required double latitude, required double longitude}) {
+    return OlaMapFlutterPlatform.instance.moveCameraToLocation(latitude: latitude, longitude: longitude);
+  }
+
   Future<void> addCustomMarker({
     required Widget child,
     required double latitude,

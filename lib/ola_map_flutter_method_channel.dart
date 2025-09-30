@@ -113,6 +113,15 @@ class MethodChannelOlaMapFlutter extends OlaMapFlutterPlatform {
   }
 
   @override
+  Future<void> moveCameraToLocation({required double latitude, required double longitude}) async {
+    try {
+      await methodChannel.invokeMethod('moveCameraToLocation', {'latitude': latitude, 'longitude': longitude});
+    } on PlatformException catch (e) {
+      throw Exception("Failed to move camera to location: '${e.message}'.");
+    }
+  }
+
+  @override
   Future<void> addCustomMarker({
     required Widget child,
     required double latitude,

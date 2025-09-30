@@ -51,7 +51,7 @@ class _OlaMapState extends State<OlaMap> {
           viewType: 'OlaMapView',
           creationParams: {
             'apiKey': widget.apiKey,
-            'showPOI': widget.showPOI ?? false,
+            'showPOI':  false,
             'showCompass': widget.showCompass ?? false,
           },
           creationParamsCodec: const StandardMessageCodec(),

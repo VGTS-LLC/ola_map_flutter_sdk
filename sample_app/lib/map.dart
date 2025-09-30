@@ -3,14 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:ola_map_flutter/ola_map_flutter.dart';
 
-class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+class HomePageView extends StatefulWidget {
+  const HomePageView({super.key});
 
   @override
-  State<HomePage> createState() => _HomePageState();
+  State<HomePageView> createState() => _HomePageViewState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageViewState extends State<HomePageView> {
   final Completer<OlaMapController> _controller = Completer<OlaMapController>();
 
   @override
